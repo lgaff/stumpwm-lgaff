@@ -1,0 +1,126 @@
+(in-package :stumpwm)
+
+(require 'swank)
+
+;; Macros and custom command definitions
+
+(setf *menu-maximum-height* 25)
+(defun elvi-search-engines ()
+  "scrape output of 'surfraw -elvi', produce a list of search engines with descriptions"
+  (let* ((elvi-raw (run-shell-command "surfraw -elvi" t))
+	 (elvi-lines (cl-ppcre:split "\\n" elvi-raw)))
+    (loop for line in elvi-lines collect
+	 (reverse (cl-ppcre:split "\\s+--\\s+" line :limit 2)))))
+
+(defcommand search-menu (term)
+    ((:string "Search term: "))
+  "Search for a term using surfraw from an interactive menu"
+  (labels ((pick (options)
+	     (let ((selection
+		    (select-from-menu (current-screen) options "Search using")))
+	       (cond
+		 ((null selection)
+		  (throw 'stumpwm::error "Abort."))
+		 ((stringp (second selection))
+		  (second selection))
+		 (t
+		  (pick (cdr selection)))))))
+    (let ((choice (pick (elvi-search-engines))))
+      (run-shell-command
+       (concatenate 'string
+		    "surfraw -browser=firefox " choice " " term)))))
+
+(defmacro defkeys (keymap &body bindings)
+  `(progn
+     ,@(loop for (key binding) in bindings collect
+	    `(define-key ,keymap (kbd ,key) ,binding))))
+
+(defcommand firefox () ()
+  "run or raise ff"
+  (run-or-raise "firefox" '(:class "Firefox")))
+
+(defcommand search-engine (engine browser term)
+    ((:string "Engine: ")
+     (:string "Browser: ")
+     (:string "Search term: "))
+  "Search for a term using surfraw"
+  (run-shell-command
+   (concatenate 'string "surfraw -browser=" browser " " engine " " term)))
+
+(defmacro defsearches (&body engines)
+  "Define StumpWM commands for commonly used search engines. Search engine names
+  must be valid surfraw elvi."
+  `(progn
+     ,@(loop for engine in engines collect
+	    `(defcommand ,engine (term)
+		 ((:string "Search term: "))
+	       (run-shell-command
+		(concatenate 'string "surfraw -browser=firefox" " "
+			     ,(format nil "~(~a~)" (string engine))
+			     " " term) t)))))
+
+
+(defsearches
+    google
+    wikipedia
+    archwiki
+    cliki
+    etym
+    acronym
+    piratebay
+    rfc
+    translate
+    youtube)
+
+;; Font/color preferences
+
+(set-font "-*-proggyclean-medium-*-normal--13-*-*-*-*-*-iso8859-1")
+
+;; Groups and frames
+
+;; zero indexing as an idiom fails here since 0 is too far removed from 1
+;; on a keyboard.
+(setf *frame-number-map* "123456789")
+
+(setf (group-name (first (screen-groups (current-screen)))) "Firefox")
+(stumpwm::run-commands "gkill Emacs"
+		       "gnewbg Emacs")
+(stumpwm::run-commands "gkill Work-desktop"
+		       "gnewbg Work-desktop")
+(stumpwm::run-commands "gkill Westeros"
+		       "gnewbg Westeros")
+
+;; Mode line
+
+(setf *screen-mode-line-format* "[^B%n^b] %W")
+
+;; Key bindings
+
+(set-prefix-key (kbd "F20"))
+
+(defkeys *root-map*
+  ("C-c" "exec gnome-terminal")
+  ("c" "exec gnome-terminal")
+  ("b" "firefox")
+  ("C-b" "firefox"))
+
+(defvar *searches-map*
+  (let ((m (make-sparse-keymap)))
+    (defkeys m
+      ("/" "google")
+      ("w" "wikipedia")
+      ("a" "archwiki")
+      ("c" "cliki")
+      ("p" "piratebay")
+      ("e" "etym")
+      ("r" "rfc") 
+      ("t" "translate")
+      ("y" "youtube")
+      ("m" "search-menu"))
+    m))
+
+(define-key *root-map* (kbd "/") '*searches-map*)
+
+;; Start any subsystems
+(swank:create-server :port 4005)
+(mode-line)
